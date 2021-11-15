@@ -15,8 +15,7 @@ library("MAST")
 library("lme4")
 library("DESeq2")
 library("abind")
-
-source("~/Dropbox/Barycenter/BSDEpackage/BSDE/R/simu_functions.R")
+library("BSDE")
 ```
 
 # Simulation
@@ -473,10 +472,8 @@ library("ggplot2")
 library("emdbook")
 library("Rcpp")
 library("Barycenter")
+library("BSDE")
 
-use_python("/nas/longleaf/apps/python/3.5.1/bin/python3")
-source("~/Dropbox/Barycenter/BSDEpackage/BSDE/R/op_functions.R")
-py_run_file("~/Dropbox/Barycenter/BSDEpackage/op_functions.py")
 op_pval = matrix(ncol = 1, nrow = nrow(sim_matrix_log))
 
 print(date())
