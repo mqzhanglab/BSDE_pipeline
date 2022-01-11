@@ -62,8 +62,6 @@ Senario settings in our analysis are as follows:
 #senarios
 covariate_flag=NA #c(NA, "quantile99")
 perm_label=0 #perm_label =0 means calculate the observed data other wise, permutated data
-merge_method="python" # c("R","python","python_exp")
-lambda_fold=2
 
 ```
 
@@ -85,6 +83,7 @@ logcount_data_bulk=log2(rawM_bulk+1)
 
 #input counts
 rawM=readRDS("../data/IPF/rawM.rds")
+rawcount_data=rawM
 logcount_data=log2(rawM+1)
 dim(logcount_data)
 dim(meta)
@@ -129,8 +128,8 @@ bc_case_ob=list()
 bc_ctrl_ob=list()
 bcw_case_ob=list()
 bcw_ctrl_ob=list()
-#for(ig in 1:nrow(logcount_data)){
-for(ig in 1:10){
+for(ig in 1:nrow(logcount_data)){
+#for(ig in 1:10){
   
   bc_case_ob[[ig]]=list()
   bc_ctrl_ob[[ig]]=list()
@@ -141,18 +140,214 @@ for(ig in 1:10){
   cur_ind=meta$individual
   cur_pheno=meta$diagnosis
   
-  tempa=tryCatch({cal_w2_pval(count_per_gene=cur_sim,meta_individual=cur_ind,meta_phenotype=cur_pheno,perm_num=200,unif_round_unit=0.5,l_fold=lambda_fold,merge_method=merge_method,weight=ipww,shrink=FALSE)}, error = function(e) {NA} )
-  op_pvalw[ig]=tryCatch({tempa[[1]]}, error = function(e) {NA} )
-  bcw_case_ob[[ig]]=tryCatch({tempa[[2]]}, error = function(e) {NA} )
-  bcw_ctrl_ob[[ig]]=tryCatch({tempa[[3]]}, error = function(e) {NA} )
-  if(!(is.na(op_pvalw[ig])) && op_pvalw[ig]<2/200){
-    op_pvalw[ig]=tryCatch({cal_w2_pval(count_per_gene=cur_sim,meta_individual=cur_ind,meta_phenotype=cur_pheno,perm_num=1000,unif_round_unit=0.5,l_fold=lambda_fold,merge_method=merge_method,weight=ipww,shrink=FALSE)[[1]]}, error = function(e) {NA} )}
-  if(!(is.na(op_pvalw[ig])) && op_pvalw[ig]<2/1000){
-    op_pvalw[ig]=tryCatch({cal_w2_pval(count_per_gene=cur_sim,meta_individual=cur_ind,meta_phenotype=cur_pheno,perm_num=5000,unif_round_unit=0.5,l_fold=lambda_fold,merge_method=merge_method,weight=ipww,shrink=FALSE)[[1]]}, error = function(e) {NA} )}
+  tempa=tryCatch({cal_w2_pval(count_per_gene=cur_sim,meta_individual=cur_ind,meta_phenotype=cur_pheno,perm_num=200,unif_round_unit=0.5)}, error = function(e) {NA} )
+  op_pval[ig]=tryCatch({tempa[[1]]}, error = function(e) {NA} )
+  bc_case_ob[[ig]]=tryCatch({tempa[[2]]}, error = function(e) {NA} )
+  bc_ctrl_ob[[ig]]=tryCatch({tempa[[3]]}, error = function(e) {NA} )
+  if(!(is.na(op_pval[ig])) && op_pval[ig]<2/200){
+    op_pval[ig]=tryCatch({cal_w2_pval(count_per_gene=cur_sim,meta_individual=cur_ind,meta_phenotype=cur_pheno,perm_num=1000,unif_round_unit=0.5)[[1]]}, error = function(e) {NA} )}
+  if(!(is.na(op_pval[ig])) && op_pval[ig]<2/1000){
+    op_pval[ig]=tryCatch({cal_w2_pval(count_per_gene=cur_sim,meta_individual=cur_ind,meta_phenotype=cur_pheno,perm_num=5000,unif_round_unit=0.5)[[1]]}, error = function(e) {NA} )}
+  if(!(is.na(op_pval[ig])) && op_pval[ig]<2/5000){
+    op_pval[ig]=tryCatch({cal_w2_pval(count_per_gene=cur_sim,meta_individual=cur_ind,meta_phenotype=cur_pheno,perm_num=20000,unif_round_unit=0.5)[[1]]}, error = function(e) {NA} )}
+  if(!(is.na(op_pval[ig])) && op_pval[ig]<2/20000){
+    op_pval[ig]=tryCatch({cal_w2_pval(count_per_gene=cur_sim,meta_individual=cur_ind,meta_phenotype=cur_pheno,perm_num=100000,unif_round_unit=0.5)[[1]]}, error = function(e) {NA} )}
+  if(!(is.na(op_pval[ig])) && op_pval[ig]<2/100000){
+    op_pval[ig]=tryCatch({cal_w2_pval(count_per_gene=cur_sim,meta_individual=cur_ind,meta_phenotype=cur_pheno,perm_num=500000,unif_round_unit=0.5)[[1]]}, error = function(e) {NA} )}
+  
+  if(ig%%100==0){
+    print(ig)
+  }
 }
+
 
 names(op_pvalw)=gene_id
 
+
+```
+
+
+While we can run our compared method with
+
+MAST
+```{r run_MAST,eval=FALSE}
+cell_id=meta$cell
+gene_id=dimnames(logcount_data)[[1]]
+rownames(logcount_data)=gene_id
+colnames(logcount_data)=cell_id
+
+
+library("MAST")
+library("lme4")
+
+fData=data.frame(primerid=gene_id)
+cData=data.frame(wellKey=cell_id)
+colnames(meta)
+length(fData)
+length(cData)
+
+
+sca=FromMatrix(logcount_data, cData, fData)
+colData(sca)$cngeneson = apply(logcount_data>0,2,mean)
+colData(sca)$diagnosis =as.factor(meta$diagnosis)
+colData(sca)$ind = as.factor(meta$individual)
+
+colData(sca)
+
+#pval0
+date()
+gc()
+b0 = zlm(formula = ~ diagnosis + cngeneson , sca = sca, parallel = TRUE)
+date()
+gc()
+lrt0 = lrTest(b0, "diagnosis")
+MAST_pval0 = apply(lrt0, 1, function(x){x[3,3]})
+length(MAST_pval0)
+MAST_pval0[1:4]
+
+```
+
+aggregateBioVar and DESeq2
+```{r run_aggregateBioVar,eval=FALSE}
+library(aggregateBioVar)
+library(SummarizedExperiment, quietly = TRUE)
+library(SingleCellExperiment, quietly = TRUE)
+library(DESeq2, quietly = TRUE)
+
+sca=SingleCellExperiment(list(counts=rawcount_data), 
+                         colData=data.frame(wellKey=cell_id), 
+                         rowData=data.frame(primerid=gene_id))
+colData(sca)$diagnosis =as.factor(meta$diagnosis)
+colData(sca)$ind = as.factor(meta$individual)
+colData(sca)$cluster = as.factor(meta$cluster)
+
+colData(sca)
+
+sca_argBV =aggregateBioVar(scExp = sca,subjectVar = "ind", cellVar = "cluster")
+
+#cluster 28 doesn't work
+for(cluster_tag in 29:length(total_cluster)){
+  agrBV_pval0=NA
+  agrBV_pval1=NA
+  cell_dds=NA
+  subj_dds=NA
+  #agreBV_pval0: do it with teh version of direct DEseq2.
+  sca_cur =sca[, which(as.character(sca$cluster) == total_cluster[cluster_tag])]
+  sca_cur$diagnosis = as.factor(sca_cur$diagnosis)
+  
+  cell_dds =DESeqDataSetFromMatrix(
+      countData = assay(sca_cur, "counts"),
+      colData = colData(sca_cur),
+      design = ~ diagnosis
+    )
+  cell_dds = DESeq(cell_dds)
+  agrBV_pval0 = results(cell_dds)$pvalue
+  
+  #agreBV_pval1: do aggregate and then DEseq2.
+  subj_dds =DESeqDataSetFromMatrix(
+      countData = assay(sca_argBV[[(cluster_tag + 1)]], "counts"),
+      colData = colData(sca_argBV[[(cluster_tag + 1)]]),
+      design = ~ diagnosis
+    )
+  subj_dds = DESeq(subj_dds)
+  agrBV_pval1 = results(subj_dds)$pvalue
+  
+  names(agrBV_pval0)=gene_id #DESeq2
+  names(agrBV_pval1)=gene_id #aggregateBioVar
+  print(paste(cluster_tag,names(sca_argBV)[(cluster_tag + 1)],total_cluster[cluster_tag]))
+}
+
+```
+
+MUSCAT
+```{r run_muscat,eval=FALSE}
+dim(rawcount_data)
+rawcount_data[1:10,1:10]
+cell_id=as.character(tmeta$Cell)
+gene_id=dimnames(rawcount_data)[[1]]
+rownames(rawcount_data)=gene_id
+colnames(rawcount_data)=cell_id
+
+library(muscat)
+library(SummarizedExperiment, quietly = TRUE)
+library(SingleCellExperiment, quietly = TRUE)
+library(DESeq2, quietly = TRUE)
+
+sca=SingleCellExperiment(list(counts=rawcount_data), 
+                         colData=data.frame(wellKey=cell_id), 
+                         rowData=data.frame(primerid=gene_id))
+
+#note Here the names are different
+colData(sca)$cluster_id = as.factor(tmeta$cluster)
+colData(sca)$sample_id = as.factor(tmeta$ind)
+colData(sca)$group_id=as.factor(tmeta$diagnosis)
+
+n_cells=table(tmeta$ind)
+n_cells=as.numeric(n_cells[match(unique(tmeta$ind),names(n_cells))])
+group_id=as.factor(tmeta$diagnosis[match(unique(tmeta$ind),tmeta$ind)])
+sample_id=as.factor(unique(tmeta$ind))
+
+metadata(sca)$experiment_info=data.frame(sample_id=sample_id,group_id=group_id,n_cells=n_cells)
+
+pb1 = aggregateData(sca,assay = "counts", fun = "sum",by = c("cluster_id", "sample_id"))
+
+#Sample Level analysis: Pseudobulk method
+res1 = pbDS(pb1, verbose = FALSE,min_cells = 10)
+tbl1 = res1$table[[1]]
+
+for(cluster_tag in  1:length(tbl1)){
+  cur_cluster=match(names(tbl1),total_cluster)[cluster_tag]
+  pb_pval1=NA
+  pb_pval1=tbl1[[cluster_tag]]$p_val
+  names(pb_pval1)=tbl1[[cluster_tag]]$gene
+  print(paste(cluster_tag,names(tbl1[cluster_tag]),total_cluster[cur_cluster]))
+}
+```
+
+Mann Whitney U
+```{r run_ranksum,eval=FALSE}
+print("start rk")
+
+dim(rawcount_data)
+rawcount_data[1:10,1:10]
+cell_id=as.character(tmeta$Cell)
+gene_id=dimnames(rawcount_data)[[1]]
+rownames(rawcount_data)=gene_id
+colnames(rawcount_data)=cell_id
+
+library(aggregateBioVar)
+library(SingleCellExperiment, quietly = TRUE)
+
+
+sca=SingleCellExperiment(list(counts=rawcount_data), 
+                         colData=data.frame(wellKey=cell_id), 
+                         rowData=data.frame(primerid=gene_id))
+colData(sca)$diagnosis =as.factor(tmeta$diagnosis)
+colData(sca)$ind = as.factor(tmeta$individual)
+colData(sca)$cluster = as.factor(tmeta$cluster)
+
+colData(sca)
+
+sca_rk =aggregateBioVar(scExp = sca,subjectVar = "ind", cellVar = "cluster")
+
+#cluster_tag==28 doesn't work for single DESeq with 3K
+for(cluster_tag in 1:length(total_cluster)){
+  rk_pval0=NA
+  rk_pval1=NA
+  #rk_pval0: do it with the version of direct ranksum.
+  sca_cur =sca[, which(as.character(sca$cluster) == total_cluster[cluster_tag])]
+  sca_cur$diagnosis = as.factor(sca_cur$diagnosis)
+  
+  rk_pval0=apply(assay(sca_cur, "counts"),1,function(x){wilcox.test(x[sca_cur$diagnosis!="Control"],x[sca_cur$diagnosis=="Control"])$p.value})
+  
+  #rk_pval1: do aggregate and then ranksum.
+  sca_cur_rk=sca_rk[[(cluster_tag + 1)]]
+  rk_pval1=apply(assay(sca_cur_rk, "counts"),1,function(x){wilcox.test(x[colData(sca_cur_rk)$diagnosis!="Control"],x[colData(sca_cur_rk)$diagnosis=="Control"])$p.value})
+  
+  names(rk_pval0)=gene_id
+  names(rk_pval1)=gene_id
+  print(paste(cluster_tag,names(sca_rk)[(cluster_tag + 1)],total_cluster[cluster_tag]))
+}
 
 ```
 
@@ -228,8 +423,8 @@ t_col = function(color, percent = 60, name = NULL) {
 
 ```{r result_load,eval=runcode}
 #read_in
-opw_padj=readRDS("../data/IPF/opw_padj.rds")
-gene_id=names(opw_padj[[1]])
+op_padj=readRDS("../data/IPF/op_padj.rds")
+gene_id=names(op_padj[[1]])
 tmeta=readRDS("../data/IPF/tmeta.rds")
 cell_num_table=readRDS("../data/IPF/cell_num_table.rds")
 cluster=unique(tmeta$cluster)
@@ -248,7 +443,7 @@ cluster_plot=gsub("+ SCGB1A","/",cluster_plot)
 ## Boxplot of the number of cells per subjects.
 
 ```{r cell_per_subject,eval=runcode}
-pval_num=sapply(opw_padj,function(x){sum(x<=0.1,na.rm=TRUE)}) #adjusted FDR <0.1
+pval_num=sapply(op_padj,function(x){sum(x<=0.1,na.rm=TRUE)}) #adjusted FDR <0.1
 
 population=tmeta$population[match(cluster,tmeta$cluster)]
 sub_cluster_index=which(population=="Epithelial")
@@ -321,7 +516,7 @@ colnames(go_table)=c("cluster","term","nlog10pval")
 for(i_cluster in sub_cluster_index[porder]){
   
   #KEGG analysis
-  cur_pval=opw_padj[[i_cluster]]
+  cur_pval=op_padj[[i_cluster]]
   genes=as.integer(cur_pval<=0.05)
   names(genes)=names(cur_pval)
   
@@ -409,13 +604,13 @@ for(i_cluster in c(7,11,2,8,12)){
   
   cur_n=100
   
-  sig_index_opw=c(order(cur_pval,decreasing = FALSE))[1:sum(cur_padj<=0.1,na.rm = TRUE)]
+  sig_index_op=c(order(cur_pval,decreasing = FALSE))[1:sum(cur_padj<=0.1,na.rm = TRUE)]
   
   mt_index=grep("^MT",names(cur_pval)) #remove MT genes
-  sig_index_opw=setdiff(sig_index_opw,mt_index)
+  sig_index_op=setdiff(sig_index_op,mt_index)
   
   ###plot 
-  for(i_sig in c(sig_index_opw)){
+  for(i_sig in c(sig_index_op)){
     
     cur_case=bcw_case[[i_sig]]
     cur_ctrl=bcw_ctrl[[i_sig]]
@@ -447,10 +642,13 @@ par(op)
 ```
 
 
+
+
 # Session Information
 ```{r ,eval=runcode}
 sessionInfo()
 ```
+
 
 # Reference
 
@@ -458,6 +656,9 @@ Finak, G., McDavid, A., Yajima, M., Deng, J., Gersuk, V., Shalek, A. K., ... & G
 
 Love, M. I., Huber, W., & Anders, S. (2014). Moderated estimation of fold change and dispersion for RNA-seq data with DESeq2. Genome biology, 15(12), 1-21.
 
-Xu, Y., Mizuno, T., Sridharan, A., Du, Y., Guo, M., Tang, J., ... & Whitsett, J. A. (2016). Single-cell RNA sequencing identifies diverse roles of epithelial cells in idiopathic pulmonary fibrosis. JCI insight, 1(20).
+Velmeshev, D., Schirmer, L., Jung, D., Haeussler, M., Perez, Y., Mayer, S., ... & Kriegstein, A. R. (2019). Single-cell genomics identifies cell type–specific molecular changes in autism. Science, 364(6441), 685-689.
 
-Young, M. D., Wakefield, M. J., Smyth, G. K., & Oshlack, A. (2010). Gene ontology analysis for RNA-seq: accounting for selection bias. Genome biology, 11(2), 1-12.
+Thurman, A. L., Ratcliff, J. A., Chimenti, M. S., & Pezzulo, A. A. (2021). Differential gene expression analysis for multi-subject single cell RNA sequencing studies with aggregateBioVar. Bioinformatics.
+
+Crowell, H. L., Soneson, C., Germain, P. L., Calini, D., Collin, L., Raposo, C., ... & Robinson, M. D. (2020). Muscat detects subpopulation-specific state transitions from multi-sample multi-condition single-cell transcriptomics data. Nature communications, 11(1), 1-12.
+

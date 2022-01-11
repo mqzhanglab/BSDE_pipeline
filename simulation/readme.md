@@ -15,7 +15,8 @@ library("MAST")
 library("lme4")
 library("DESeq2")
 library("abind")
-library("BSDE")
+
+source("~/Dropbox/Barycenter/BSDEpackage/BSDE/R/simu_functions.R")
 ```
 
 # Simulation
@@ -392,28 +393,10 @@ cell_count_quantile = apply(sim_matrix, 2, quantile)
 ```
 
 # Simulated Differential Expressed Analysis
-We calculate the p-values of the simulated genes through the BSDE method as well as the [MAST](https://www.bioconductor.org/packages/release/bioc/html/MAST.html) (with a widely used protocol mixed-effect model "glmer" & Likelihood-ratio Test) and the [DESeq2](https://bioconductor.org/packages/release/bioc/vignettes/DESeq2/inst/doc/DESeq2.html).
+We calculate the p-values of the simulated genes through the BSDE method as well as the [MAST](https://www.bioconductor.org/packages/release/bioc/html/MAST.html) (with a widely used protocol mixed-effect model "glmer" & Likelihood-ratio Test), the [DESeq2](https://bioconductor.org/packages/release/bioc/vignettes/DESeq2/inst/doc/DESeq2.html),
+[aggregateBioVar](https://bioconductor.org/packages/release/bioc/html/aggregateBioVar.html),
+[MUSCAT](https://bioconductor.org/packages/release/bioc/html/muscat.html) and Mann Whitney U tests.
 
-## DESeq2
-
-For DESeq2 analysis, we construct the bulk RNAseq situation though suming up the counts per gene, per cluster, per individual, per 1000 cells.
-
-```{r deseq2,eval=runcode}
-
-cur_info = meta[, c("individual", "phenotype")]
-cur_info = unique(cur_info)
-rownames(cur_info) = cur_info$individual
-cur_info$phenotype = as.factor(cur_info$phenotype)
-
-# object construction
-dds = DESeqDataSetFromMatrix(countData = sim_matrix_bulk,
-                             colData = cur_info,
-                             design = ~ phenotype)
-
-# observed pvalue calculation
-dds = DESeq(dds)
-deseq_pval = results(dds)$pvalue
-```
 
 ## MAST
 
@@ -502,6 +485,124 @@ rownames(op_pval) = gene_id
 
 ```
 
+
+
+## DESeq2 and aggregateBioVar
+
+```{r aggregateBioVar,eval=runcode}
+library(aggregateBioVar)
+library(SummarizedExperiment, quietly = TRUE)
+library(SingleCellExperiment, quietly = TRUE)
+library(DESeq2, quietly = TRUE)
+
+cell_id = colnames(sim_matrix)   #get the cell id from the data
+gene_id = rownames(sim_matrix)   #get the gene id from the data
+    
+fData = data.frame(primerid = gene_id)
+cData = data.frame(wellKey = cell_id)
+    
+diagnosis = as.character(meta$phenotype) 
+diagnosis2=matrix("Control",ncol=1,nrow=length(diagnosis))
+diagnosis2[which(diagnosis == "1")] = "Case"
+diagnosis= as.factor(diagnosis2)
+
+sca=SingleCellExperiment(list(counts=cur_sim_matrix), 
+                               colData=data.frame(wellKey=cell_id), 
+                               rowData=data.frame(primerid=gene_id))
+colData(sca)$cngeneson = as.numeric(meta$CDR)
+colData(sca)$diagnosis = as.factor(diagnosis)
+colData(sca)$ind = as.factor(meta$individual)
+colData(sca)$celltype = as.factor(rep("type1",length(meta$individual)))
+colData(sca)
+      
+agrBV_pval0=NA
+agrBV_pval1=NA
+cell_dds=NA
+subj_dds=NA
+
+#agreBV_pval0: DEseq2.
+cell_dds =tryCatch(DESeqDataSetFromMatrix(countData = assay(sca, "counts"),colData = colData(sca),design = ~ diagnosis), error = function(e) {NA} )
+cell_dds = tryCatch(DESeq(cell_dds), error = function(e) {NA} )
+agrBV_pval0 = tryCatch(results(cell_dds)$pvalue, error = function(e) {NA} )
+      
+#agreBV_pval1: do aggregate and then DEseq2.
+sca_argBV = tryCatch(aggregateBioVar(scExp = sca,subjectVar = "ind", cellVar = "celltype"), error = function(e) {NA} )
+subj_dds =tryCatch(DESeqDataSetFromMatrix(countData = assay(sca_argBV$type1, "counts"),colData = colData(sca_argBV$type1),design = ~ diagnosis), error = function(e) {NA} )
+subj_dds = tryCatch(DESeq(subj_dds), error = function(e) {NA} )
+agrBV_pval1 = tryCatch(results(subj_dds)$pvalue, error = function(e) {NA} )
+      
+
+```
+
+## MUSCAT
+
+```{r MUSCAT,eval=runcode}
+library(muscat)
+
+#construct the format
+cell_id = colnames(sim_matrix)   #get the cell id from the data
+gene_id = rownames(sim_matrix)   #get the gene id from the data
+    
+fData = data.frame(primerid = gene_id)
+cData = data.frame(wellKey = cell_id)
+    
+diagnosis = as.character(meta$phenotype) 
+
+diagnosis2=matrix("Control",ncol=1,nrow=length(diagnosis))
+diagnosis2[which(diagnosis == "1")] = "Case"
+diagnosis= as.factor(diagnosis2)
+
+sca=SingleCellExperiment(list(counts=sim_matrix), 
+                        colData=data.frame(wellKey=cell_id), 
+                        rowData=data.frame(primerid=gene_id))
+
+
+colData(sca)$cluster_id = as.factor(rep("type1",length(meta$individual)))
+colData(sca)$sample_id = paste0(as.factor(diagnosis),as.factor(meta$individual))
+colData(sca)$group_id=as.factor(diagnosis)
+      
+n_cells=table(meta$individual)
+n_cells=as.numeric(n_cells[match(unique(meta$individual),names(n_cells))])
+group_id=as.factor(diagnosis[match(unique(meta$individual),meta$individual)])
+sample_id=paste0(as.factor(diagnosis),as.factor(meta$individual))
+      
+metadata(sca)$experiment_info=data.frame(sample_id=sample_id,group_id=group_id,n_cells=n_cells)
+
+# test
+pb1 = aggregateData(sca,assay = "counts", fun = "sum",by = c("cluster_id", "sample_id"))
+res1 = pbDS(pb1, verbose = FALSE)
+tbl1 = res1$table[[1]]
+pb_pval1=tryCatch(tbl1[[1]]$p_val, error = function(e) {NA} )
+names(pb_pval1)=tryCatch(tbl1[[1]]$gene, error = function(e) {NA} )
+```
+
+##  Mann-Whitney U test
+```{r ranksum, eval=runcode}
+diagnosis = as.character(meta$phenotype) 
+diagnosis2=matrix("Control",ncol=1,nrow=length(diagnosis))
+diagnosis2[which(diagnosis == "1")] = "Case"
+diagnosis= as.factor(diagnosis2)
+      
+rk_pval0=NA
+rk_pval1=NA
+      
+rk_pval0=apply(sim_matrix,1,function(x){wilcox.test(x[diagnosis=="Case"],x[diagnosis=="Control"])$p.value})
+
+sca=SingleCellExperiment(list(counts=sim_matrix), 
+                               colData=data.frame(wellKey=cell_id), 
+                               rowData=data.frame(primerid=gene_id))
+colData(sca)$diagnosis = as.factor(diagnosis)
+colData(sca)$ind = as.factor(meta$individual)
+colData(sca)$celltype = as.factor(rep("type1",length(meta$individual)))
+      
+sca = tryCatch(aggregateBioVar(scExp = sca,subjectVar = "ind", cellVar = "celltype"), error = function(e) {NA} )
+      
+cur_sim_matrix_ind=assay(sca[[1]],"counts")
+d_ind=as.character(colData(sca[[1]])$diagnosis)
+rk_pval1=apply(cur_sim_matrix,1,function(x){wilcox.test(x[d_ind=="Case"],x[d_ind=="Control"])$p.value})
+      
+
+```
 # Further Analysis and Method Evaluation
 Once we have the p-values, we can do further analysis on the method evaluation.For example, we can calculate the proportion of p-values < 0.05. We can also draw similar plot for power, where power is calculated as the proportion of p-values < 0.05 in permuted data. 
 
